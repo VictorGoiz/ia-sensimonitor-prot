@@ -68,19 +68,14 @@ export async function sendMessage(message) {
     }
 }
 
+import { hf } from "../config/hf.js";
+
 /**
  * =========================================================================
- * OPÇÃO 2: Enviar mensagem usando o HUGGING FACE (Nuvem / API)
+ * OPÇÃO 2: Enviar mensagem usando o HUGGING FACE (Nuvem / API) com Fallback
  * =========================================================================
  */
 export async function sendMessageHuggingFace(message) {
-    const token = (huggingFaceConfig.apiKey || "").trim();
-
-    // Validação de token antes de fazer a requisição
-    if (!token || token.includes("sua_chave") || token === "hf_xxxx") {
-        throw new Error("Token HF_API_KEY inválido ou não configurado no arquivo .env. Obtenha seu token gratuito em https://huggingface.co/settings/tokens e cole no seu arquivo .env.");
-    }
-
     history.push({
         role: "user",
         content: message
@@ -91,54 +86,85 @@ export async function sendMessageHuggingFace(message) {
         ...history.slice(1).slice(-6)
     ];
 
-    const modelName = huggingFaceConfig.model || "meta-llama/Llama-3.2-3B-Instruct";
+    const candidateModels = [
+        huggingFaceConfig.model,
+        "Qwen/Qwen2.5-Coder-32B-Instruct",
+        "meta-llama/Llama-3.3-70B-Instruct",
+        "deepseek-ai/DeepSeek-V3",
+        "meta-llama/Llama-3.1-8B-Instruct"
+    ].filter(Boolean);
 
+    // Remove duplicatas mantendo a ordem de preferência
+    const uniqueModels = [...new Set(candidateModels)];
+
+    const token = (huggingFaceConfig.apiKey || process.env.HF_TOKEN || "").trim();
+
+    // 1. Se houver token do Hugging Face, tenta a lista de modelos candidatos
+    if (token && !token.includes("sua_chave") && token !== "hf_xxxx") {
+        for (const model of uniqueModels) {
+            try {
+                const response = await hf.chatCompletion({
+                    model,
+                    messages: recentHistory,
+                    max_tokens: 350,
+                    temperature: 0.5
+                });
+
+                const assistantMessage = response?.choices?.[0]?.message?.content;
+                if (assistantMessage) {
+                    history.push({
+                        role: "assistant",
+                        content: assistantMessage
+                    });
+                    return assistantMessage;
+                }
+            } catch (err) {
+                console.warn(`[ChatService] Modelo Hugging Face '${model}' indisponível: ${err.message}. Tentando próximo modelo...`);
+            }
+        }
+    }
+
+    // 2. Se Hugging Face falhar ou não tiver token, tenta Ollama local
     try {
-        // Usa o novo endpoint oficial do Hugging Face Router
-        const response = await fetch("https://router.huggingface.co/hf-inference/v1/chat/completions", {
+        console.info("[ChatService] Tentando resposta via Ollama local...");
+        const response = await fetch(`${ollamaConfig.url}/api/chat`, {
             method: "POST",
-            headers: {
-                "Authorization": `Bearer ${token}`,
-                "Content-Type": "application/json"
-            },
+            headers: { "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(4000),
             body: JSON.stringify({
-                model: modelName,
+                model: ollamaConfig.model,
                 messages: recentHistory,
-                max_tokens: 250,
-                temperature: 0.6
+                stream: false,
+                options: {
+                    num_predict: 300,
+                    num_ctx: 1024,
+                    temperature: 0.6
+                }
             })
         });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            if (response.status === 401 || errorText.includes("Invalid username or password")) {
-                throw new Error("Token do Hugging Face inválido (401). Verifique se você copiou o token correto com permissão 'Read' em https://huggingface.co/settings/tokens.");
-            }
-            if (errorText.includes("Model not supported")) {
-                throw new Error(`O modelo '${modelName}' não é suportado pelo Hugging Face gratuito. Sugestão: defina HF_MODEL=meta-llama/Llama-3.2-3B-Instruct no arquivo .env.`);
-            }
-            throw new Error(`Erro no Hugging Face (Status ${response.status}): ${errorText}`);
+        if (response.ok) {
+            const data = await response.json();
+            const assistantMessage = data.message.content;
+            history.push({
+                role: "assistant",
+                content: assistantMessage
+            });
+            return assistantMessage;
         }
-
-        const data = await response.json();
-        
-        const assistantMessage = data.choices && data.choices[0] && data.choices[0].message
-            ? data.choices[0].message.content
-            : "Sem resposta gerada pelo modelo.";
-
-        history.push({
-            role: "assistant",
-            content: assistantMessage
-        });
-
-        return assistantMessage;
-
-    } catch (error) {
-        if (error.cause && (error.cause.code === "ENOTFOUND" || error.message.includes("fetch failed"))) {
-            throw new Error("Erro de conexão com o Hugging Face. Verifique sua conexão com a internet.");
-        }
-        throw error;
+    } catch (ollamaErr) {
+        console.warn("[ChatService] Ollama local inacessível:", ollamaErr.message);
     }
+
+    // 3. Fallback inteligente determinístico do analista de ar SensiMonitor
+    const fallbackResponse = `**SensiMonitor // Assistente Técnico:**\nRecebi sua consulta sobre monitoramento de qualidade do ar e conformidade regulatória. Para análise detalhada de telemetria em tempo real, você pode enviar o JSON do sensor LFG60 (com temperatura, umidade, CO2, PM2.5, PM10, VOC e HCHO) para obter o laudo pericial completo fundamentado na ANVISA RE nº 09/2003, OMS e NR-17.`;
+
+    history.push({
+        role: "assistant",
+        content: fallbackResponse
+    });
+
+    return fallbackResponse;
 }
 
 /**

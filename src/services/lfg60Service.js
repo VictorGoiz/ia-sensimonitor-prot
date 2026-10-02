@@ -86,33 +86,44 @@ ${temp > 28 ? "A elevação térmica detectada (" + temp + " °C) induz estresse
  */
 export async function analyzeSensorData(data) {
     const promptContent = typeof data === "string" ? data : buildLfg60Prompt(data);
-    const model = process.env.HF_MODEL || "meta-llama/Llama-3.2-3B-Instruct";
     const token = process.env.HF_TOKEN || process.env.HF_API_KEY;
 
-    // 1. Tenta Hugging Face com limite expandido para emissão de relatório completo
-    if (token && !token.includes("sua_chave") && token !== "hf_xxxx") {
-        try {
-            const response = await hf.chatCompletion({
-                model,
-                messages: [
-                    {
-                        role: "system",
-                        content: AGENT_SYSTEM_PROMPT
-                    },
-                    {
-                        role: "user",
-                        content: promptContent
-                    }
-                ],
-                max_tokens: 800,
-                temperature: 0.4
-            });
+    const candidateModels = [
+        process.env.HF_MODEL,
+        "Qwen/Qwen2.5-Coder-32B-Instruct",
+        "meta-llama/Llama-3.3-70B-Instruct",
+        "deepseek-ai/DeepSeek-V3",
+        "meta-llama/Llama-3.1-8B-Instruct"
+    ].filter(Boolean);
 
-            if (response?.choices?.[0]?.message?.content) {
-                return response.choices[0].message.content;
+    const uniqueModels = [...new Set(candidateModels)];
+
+    // 1. Tenta Hugging Face com os modelos suportados na nuvem
+    if (token && !token.includes("sua_chave") && token !== "hf_xxxx") {
+        for (const model of uniqueModels) {
+            try {
+                const response = await hf.chatCompletion({
+                    model,
+                    messages: [
+                        {
+                            role: "system",
+                            content: AGENT_SYSTEM_PROMPT
+                        },
+                        {
+                            role: "user",
+                            content: promptContent
+                        }
+                    ],
+                    max_tokens: 800,
+                    temperature: 0.4
+                });
+
+                if (response?.choices?.[0]?.message?.content) {
+                    return response.choices[0].message.content;
+                }
+            } catch (error) {
+                console.warn(`[LFG60 Service] Falha no modelo Hugging Face '${model}': ${error.message}. Tentando próximo...`);
             }
-        } catch (error) {
-            console.warn("Falha no Hugging Face, tentando Ollama local...", error.message);
         }
     }
 

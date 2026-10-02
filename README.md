@@ -353,6 +353,9 @@ EMAIL_FROM="SensiMonitor Ambiental" <seu_email@gmail.com>
 DEFAULT_REPORT_RECIPIENT=gestao.ambiental@empresa.com.br
 DEFAULT_SCHEDULE_TIME=08:00
 SCHEDULE_TIMEZONE=America/Sao_Paulo
+
+# Restrição de CORS (Domínios autorizados separados por vírgula)
+ALLOWED_ORIGINS=https://www.sensimonitor.com.br,https://sensimonitor.com.br
 ```
 
 ---

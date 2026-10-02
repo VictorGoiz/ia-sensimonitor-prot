@@ -19,8 +19,44 @@ app.use(helmet({
 const morganFormat = process.env.NODE_ENV === "production" ? "combined" : "dev";
 app.use(morgan(morganFormat));
 
-// 3. CORS e Parser de JSON
-app.use(cors());                        // Permite acesso de frontends e serviços externos
+// 3. Configuração Restrita de CORS (Cross-Origin Resource Sharing)
+const defaultAllowedOrigins = [
+    "https://www.sensimonitor.com.br",
+    "https://sensimonitor.com.br",
+    "http://www.sensimonitor.com.br",
+    "http://sensimonitor.com.br"
+];
+
+const envOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(",").map(o => o.trim())
+    : [];
+
+const allowedOrigins = [...new Set([...defaultAllowedOrigins, ...envOrigins])];
+
+const corsOptions = {
+    origin: (origin, callback) => {
+        // Permite requisições sem origin (como chamadas backend-to-backend, cURL, mobile apps)
+        if (!origin) return callback(null, true);
+
+        // Em desenvolvimento local, permite localhost e 127.0.0.1
+        if (process.env.NODE_ENV !== "production" && (origin.includes("localhost") || origin.includes("127.0.0.1"))) {
+            return callback(null, true);
+        }
+
+        // Valida se a origem do navegador está na lista autorizada
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+
+        return callback(new Error(`Acesso negado por CORS: Origem '${origin}' não autorizada.`));
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Accept"],
+    credentials: true,
+    optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());                // Permite leitura de payloads JSON
 
 // 4. Endpoint de Health Check (Essencial para EC2 / AWS ALB / Monitoramento)
@@ -38,5 +74,20 @@ app.use("/api", chatRoute);
 app.use("/api", analyzeRoute);
 app.use("/api/lfg60", lfg60Route);
 
+// 6. Middleware Global de Tratamento de Erros (incluindo bloqueios de CORS)
+app.use((err, req, res, next) => {
+    if (err.message && err.message.includes("CORS")) {
+        return res.status(403).json({
+            error: err.message
+        });
+    }
+
+    console.error("[App Error]:", err.message || err);
+    return res.status(500).json({
+        error: err.message || "Erro interno do servidor."
+    });
+});
+
 export default app;
+
 

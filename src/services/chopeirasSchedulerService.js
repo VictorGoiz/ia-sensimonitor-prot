@@ -1,14 +1,14 @@
 import cron from "node-cron";
 import { emailConfig } from "../config/emailConfig.js";
-import { analyzeSensorData, generateAnalysisPDF } from "./lfg60Service.js";
-import { generateLfg60Excel } from "./excelService.js";
-import { sendReportEmail } from "./emailService.js";
+import { analyzeChopeirasData, generateChopeirasPDF } from "./chopeirasService.js";
+import { generateChopeirasExcel } from "./excelService.js";
+import { sendChopeirasEmail } from "./emailService.js";
 
-class SensorReportScheduler {
+class ChopeirasReportScheduler {
     constructor() {
         this.task = null;
         this.active = false;
-        this.timeString = emailConfig.defaultScheduleTime || "08:00"; // Ex: "08:00"
+        this.timeString = emailConfig.defaultScheduleTime || "08:00";
         this.cronExpression = this.convertTimeToCron(this.timeString);
         this.recipient = emailConfig.defaultRecipient;
         this.timezone = emailConfig.defaultTimezone;
@@ -17,24 +17,26 @@ class SensorReportScheduler {
         this.lastError = null;
         this.history = [];
         
-        // Armazena a última leitura telemétrica recebida dos sensores LFG60
-        this.latestSensorData = {
-            temperatura: 24.5,
-            umidade: 52.0,
-            co2: 450,
-            pm25: 10.2,
-            pm10: 18.0,
-            voc: 0.15,
-            formaldeido: 0.02
+        // Dados telemétricos padrão / última leitura em memória
+        this.latestChopeirasData = {
+            deviceName: "Chopeira Principal",
+            pressao: 24.5,
+            sensor1: 24.5,
+            rele1_on: 12.5,
+            rele1_off: 11.5,
+            rele1_acionamentos: 45,
+            rele2_on: 10.2,
+            rele2_off: 13.8,
+            rele2_acionamentos: 30
         };
+
+        // Cache de registros do dia (se recebidos via API)
+        this.dailyRecords = [];
     }
 
-    /**
-     * Converte horário "HH:mm" em expressão cron "m H * * *"
-     */
     convertTimeToCron(timeStr) {
         if (!timeStr || !timeStr.includes(":")) {
-            return "0 8 * * *"; // Padrão 08:00 todos os dias
+            return "0 8 * * *";
         }
         const [hour, minute] = timeStr.split(":").map(s => parseInt(s.trim(), 10));
         const safeHour = isNaN(hour) ? 8 : Math.max(0, Math.min(23, hour));
@@ -42,18 +44,15 @@ class SensorReportScheduler {
         return `${safeMinute} ${safeHour} * * *`;
     }
 
-    /**
-     * Atualiza a última telemetria em memória para os disparos agendados
-     */
-    updateLatestSensorData(data) {
+    updateLatestData(data, records = null) {
         if (data && typeof data === "object") {
-            this.latestSensorData = { ...this.latestSensorData, ...data };
+            this.latestChopeirasData = { ...this.latestChopeirasData, ...data };
+        }
+        if (Array.isArray(records)) {
+            this.dailyRecords = records;
         }
     }
 
-    /**
-     * Inicia ou reinicia o agendamento
-     */
     start() {
         if (this.task) {
             this.task.stop();
@@ -68,7 +67,7 @@ class SensorReportScheduler {
             this.task = cron.schedule(
                 this.cronExpression,
                 async () => {
-                    console.log(`[Scheduler LFG60] Disparo automático agendado iniciado (${new Date().toISOString()})...`);
+                    console.log(`[Chopeiras Scheduler] Disparo diário agendado iniciado (${new Date().toISOString()})...`);
                     await this.executeReportJob();
                 },
                 {
@@ -78,31 +77,25 @@ class SensorReportScheduler {
             );
 
             this.active = true;
-            console.log(`[Scheduler LFG60] Agendamento ativo para as ${this.timeString} (Cron: '${this.cronExpression}') | Timezone: ${this.timezone}`);
+            console.log(`[Chopeiras Scheduler] Agendamento ativo para as ${this.timeString} (Cron: '${this.cronExpression}') | Timezone: ${this.timezone}`);
             return true;
         } catch (error) {
-            console.error("[Scheduler LFG60] Erro ao iniciar agendador:", error.message);
+            console.error("[Chopeiras Scheduler] Erro ao iniciar agendador:", error.message);
             this.active = false;
             this.lastError = error.message;
             return false;
         }
     }
 
-    /**
-     * Para o agendamento
-     */
     stop() {
         if (this.task) {
             this.task.stop();
             this.task = null;
         }
         this.active = false;
-        console.log("[Scheduler LFG60] Agendamento de envio de relatórios pausado.");
+        console.log("[Chopeiras Scheduler] Agendamento de envio de relatórios pausado.");
     }
 
-    /**
-     * Configura um novo horário e/ou destinatário
-     */
     configure({ time, recipient, active = true, cronExp }) {
         if (time) {
             this.timeString = time;
@@ -126,37 +119,40 @@ class SensorReportScheduler {
     }
 
     /**
-     * Executa o fluxo completo: Análise IA -> Criação do PDF -> Geração do Excel -> Envio por E-mail (PDF + Excel)
+     * Executa a rotina: Análise IA -> Criação do PDF -> Geração do Excel (.xlsx) -> Envio por E-mail com ambos anexados
      */
-    async executeReportJob(overrideSensorData = null, overrideRecipient = null) {
-        const sensorData = overrideSensorData || this.latestSensorData;
+    async executeReportJob(overrideData = null, overrideRecipient = null, overrideRecords = null) {
+        const data = overrideData || this.latestChopeirasData;
         const targetRecipient = overrideRecipient || this.recipient;
+        const records = overrideRecords || this.dailyRecords;
+        const deviceName = data.deviceName || data.numero_serie || "Chopeira Principal";
         const executionTimestamp = new Date();
 
         try {
-            console.log(`[Scheduler LFG60] 1/4 Gerando análise técnica com o agente SensiMonitor...`);
-            const analysis = await analyzeSensorData(sensorData);
+            console.log(`[Chopeiras Scheduler] 1/4 Gerando parecer operacional de IA para Chopeiras...`);
+            const analysis = await analyzeChopeirasData(data);
 
-            console.log(`[Scheduler LFG60] 2/4 Gerando PDF diagramado do relatório ambiental...`);
-            const pdfBuffer = await generateAnalysisPDF({
-                sensorData,
+            console.log(`[Chopeiras Scheduler] 2/4 Gerando laudo técnico em PDF...`);
+            const pdfBuffer = await generateChopeirasPDF({
+                data,
                 analysis,
-                deviceName: "LFG60"
+                deviceName
             });
 
-            console.log(`[Scheduler LFG60] 3/4 Gerando planilha Excel (.xlsx) dos registros ambientais...`);
-            const excelBuffer = await generateLfg60Excel({
-                currentData: sensorData,
-                deviceName: "LFG60"
+            console.log(`[Chopeiras Scheduler] 3/4 Gerando planilha Excel (.xlsx) com registros das leituras do dia...`);
+            const excelBuffer = await generateChopeirasExcel({
+                records,
+                currentData: data,
+                deviceName
             });
 
-            console.log(`[Scheduler LFG60] 4/4 Enviando e-mail com 2 anexos (PDF + Excel) para: ${targetRecipient}...`);
-            const sendResult = await sendReportEmail({
+            console.log(`[Chopeiras Scheduler] 4/4 Enviando e-mail corporativo com anexos (PDF + Excel) para: ${targetRecipient}...`);
+            const sendResult = await sendChopeirasEmail({
                 to: targetRecipient,
-                sensorData,
+                data,
                 pdfBuffer,
                 excelBuffer,
-                deviceName: "LFG60"
+                deviceName
             });
 
             this.lastRun = executionTimestamp;
@@ -176,11 +172,11 @@ class SensorReportScheduler {
 
             return {
                 success: true,
-                message: `Relatório ambiental (PDF + Excel) enviado com sucesso para ${targetRecipient}`,
+                message: `Relatório de Chopeira (PDF + Excel) enviado com sucesso para ${targetRecipient}`,
                 details: sendResult
             };
         } catch (error) {
-            console.error("[Scheduler LFG60] Falha na rotina de geração/envio do relatório:", error);
+            console.error("[Chopeiras Scheduler] Falha na rotina de geração/envio do relatório:", error);
             this.lastRun = executionTimestamp;
             this.lastStatus = `Erro: ${error.message}`;
             this.lastError = error.message;
@@ -201,9 +197,6 @@ class SensorReportScheduler {
         }
     }
 
-    /**
-     * Retorna o status atual do serviço de agendamento
-     */
     getStatus() {
         return {
             active: this.active,
@@ -219,4 +212,4 @@ class SensorReportScheduler {
     }
 }
 
-export const schedulerService = new SensorReportScheduler();
+export const chopeirasSchedulerService = new ChopeirasReportScheduler();

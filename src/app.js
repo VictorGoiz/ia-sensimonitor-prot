@@ -6,13 +6,14 @@ import morgan from "morgan";
 import chatRoute from "./routes/chatRoute.js";
 import lfg60Route from "./routes/lfg60Route.js";
 import analyzeRoute from "./routes/analyzeRoute.js";
+import chopeirasRoute from "./routes/chopeirasRoute.js";
 
 const app = express();
 
 // 1. Segurança HTTP com Helmet (Preparado para ambiente de produção EC2 / Nuvem)
 app.use(helmet({
     contentSecurityPolicy: false,       // Permite compatibilidade com scripts/estilos locais e APIs externas
-    crossOriginResourcePolicy: false    // Permite consumo de PDFs e assets por outros domínios
+    crossOriginResourcePolicy: false    // Permite consumo de PDFs, Excels e assets por outros domínios
 }));
 
 // 2. Log de Requisições HTTP com Morgan
@@ -73,6 +74,7 @@ app.get("/health", (req, res) => {
 app.use("/api", chatRoute);
 app.use("/api", analyzeRoute);
 app.use("/api/lfg60", lfg60Route);
+app.use("/api/chopeiras", chopeirasRoute);
 
 // 6. Middleware Global de Tratamento de Erros (incluindo bloqueios de CORS)
 app.use((err, req, res, next) => {
@@ -89,5 +91,3 @@ app.use((err, req, res, next) => {
 });
 
 export default app;
-
-

@@ -1,4 +1,5 @@
 import { analyzeSensorData, generateAnalysisPDF } from "../services/lfg60Service.js";
+import { generateLfg60Excel } from "../services/excelService.js";
 import { sendReportEmail } from "../services/emailService.js";
 import { schedulerService } from "../services/schedulerService.js";
 
@@ -7,7 +8,8 @@ import { schedulerService } from "../services/schedulerService.js";
  */
 function extractData(body) {
     const data = body.data || body;
-    return {
+    const records = Array.isArray(body.records) ? body.records : (Array.isArray(data.records) ? data.records : []);
+    const sensorData = {
         temperatura: data.temperatura !== undefined ? Number(data.temperatura) : undefined,
         umidade: data.umidade !== undefined ? Number(data.umidade) : undefined,
         co2: data.co2 !== undefined ? Number(data.co2) : undefined,
@@ -16,6 +18,7 @@ function extractData(body) {
         voc: data.voc !== undefined ? Number(data.voc) : undefined,
         formaldeido: data.formaldeido !== undefined ? Number(data.formaldeido) : undefined
     };
+    return { sensorData, records };
 }
 
 /**
@@ -24,7 +27,7 @@ function extractData(body) {
  */
 export async function analyzeValuesLfg60(req, res) {
     try {
-        const sensorData = extractData(req.body);
+        const { sensorData, records } = extractData(req.body);
 
         if (!sensorData || Object.values(sensorData).every(v => v === undefined)) {
             return res.status(400).json({
@@ -50,13 +53,29 @@ export async function analyzeValuesLfg60(req, res) {
             return res.send(pdfBuffer);
         }
 
+        // Se solicitado diretamente em Excel (.xlsx)
+        if (req.query.format === "excel" || req.query.format === "xlsx" || req.headers.accept?.includes("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")) {
+            const excelBuffer = await generateLfg60Excel({
+                records,
+                currentData: sensorData,
+                deviceName: "LFG60"
+            });
+
+            res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+            res.setHeader("Content-Disposition", 'attachment; filename="registros_lfg60.xlsx"');
+            return res.send(excelBuffer);
+        }
+
         return res.status(200).json({
             device: "LFG60",
             timestamp: new Date().toISOString(),
             data: sensorData,
             analysis,
-            pdfEndpoint: "/api/lfg60/pdf",
-            emailEndpoint: "/api/lfg60/email/send"
+            endpoints: {
+                pdf: "/api/lfg60/pdf",
+                excel: "/api/lfg60/excel",
+                email: "/api/lfg60/email/send"
+            }
         });
 
     } catch (error) {
@@ -73,7 +92,7 @@ export async function analyzeValuesLfg60(req, res) {
  */
 export async function generatePdf(req, res) {
     try {
-        const sensorData = extractData(req.body);
+        const { sensorData } = extractData(req.body);
         const analysis = req.body.analysis || await analyzeSensorData(sensorData);
 
         const pdfBuffer = await generateAnalysisPDF({
@@ -95,13 +114,39 @@ export async function generatePdf(req, res) {
 }
 
 /**
- * Endpoint para envio imediato de relatório por e-mail com anexo em PDF
+ * Endpoint para geração direta de Planilha Excel (.xlsx)
+ * POST /api/lfg60/excel
+ */
+export async function generateExcel(req, res) {
+    try {
+        const { sensorData, records } = extractData(req.body);
+
+        const excelBuffer = await generateLfg60Excel({
+            records,
+            currentData: sensorData,
+            deviceName: "LFG60"
+        });
+
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader("Content-Disposition", 'attachment; filename="registros_lfg60.xlsx"');
+        return res.send(excelBuffer);
+
+    } catch (error) {
+        console.error("Erro ao gerar Excel do sensor LFG60:", error);
+        return res.status(500).json({
+            error: error.message || "Erro ao gerar planilha Excel."
+        });
+    }
+}
+
+/**
+ * Endpoint para envio imediato de relatório por e-mail com anexos em PDF + Excel
  * POST /api/lfg60/email/send
  */
 export async function sendEmailReport(req, res) {
     try {
         const { to, subject } = req.body;
-        const sensorData = extractData(req.body);
+        const { sensorData, records } = extractData(req.body);
         const analysis = req.body.analysis || await analyzeSensorData(sensorData);
 
         const pdfBuffer = await generateAnalysisPDF({
@@ -110,17 +155,24 @@ export async function sendEmailReport(req, res) {
             deviceName: "LFG60"
         });
 
+        const excelBuffer = await generateLfg60Excel({
+            records,
+            currentData: sensorData,
+            deviceName: "LFG60"
+        });
+
         const result = await sendReportEmail({
             to,
             sensorData,
             pdfBuffer,
+            excelBuffer,
             deviceName: "LFG60",
             subject
         });
 
         return res.status(200).json({
             success: true,
-            message: `Relatório ambiental enviado com sucesso para ${result.recipient}`,
+            message: `Relatório ambiental (PDF + Excel) enviado com sucesso para ${result.recipient}`,
             details: result
         });
     } catch (error) {
@@ -169,10 +221,11 @@ export function updateScheduleConfig(req, res) {
  */
 export async function triggerScheduleNow(req, res) {
     try {
-        const sensorData = Object.values(extractData(req.body)).some(v => v !== undefined) ? extractData(req.body) : null;
+        const { sensorData } = extractData(req.body);
+        const validData = Object.values(sensorData).some(v => v !== undefined) ? sensorData : null;
         const recipient = req.body.to || req.body.recipient || null;
 
-        const result = await schedulerService.executeReportJob(sensorData, recipient);
+        const result = await schedulerService.executeReportJob(validData, recipient);
         return res.status(result.success ? 200 : 500).json(result);
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message });
@@ -181,4 +234,3 @@ export async function triggerScheduleNow(req, res) {
 
 // Exporta alias para compatibilidade com outros nomes
 export const analyzeValuesLFG60 = analyzeValuesLfg60;
-

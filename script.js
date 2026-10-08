@@ -1,8 +1,8 @@
 // ==========================================================================
-// SENSIMONITOR // CONTROLE CORPORATIVO & EXPORTAÇÃO DE RELATÓRIO PDF (LFG60)
+// SENSIMONITOR // CONTROLE CORPORATIVO & EXPORTAÇÃO DE RELATÓRIO PDF + EXCEL
 // ==========================================================================
 
-const API_BASE = "http://localhost:3000/api";
+const API_BASE = window.API_BASE || "http://localhost:3000/api";
 
 const chatForm = document.getElementById("chat-form");
 const messageInput = document.getElementById("message-input");
@@ -10,6 +10,8 @@ const chatMessages = document.getElementById("chat-messages");
 const btnSend = document.getElementById("btn-send");
 const btnClear = document.getElementById("btn-clear");
 const btnQuickLFG60 = document.getElementById("btn-quick-lfg60") || document.getElementById("btn-quick-lg60");
+const btnSendStaticExcel = document.getElementById("btn-send-static-excel");
+const btnDownloadStaticExcel = document.getElementById("btn-download-static-excel");
 const quickSuggestions = document.getElementById("quick-suggestions");
 
 // 1. Envio de mensagem ou dados de telemetria
@@ -58,8 +60,6 @@ chatForm.addEventListener("submit", async (event) => {
 
         if (response.ok) {
             const replyText = data.analysis || data.message || "Análise concluída.";
-            
-            // Se for análise de sensor, adiciona o botão para baixar o PDF
             const sensorPayloadForPdf = isSensorJson ? parsedData : null;
             addMessage("assistant", replyText, sensorPayloadForPdf);
         } else {
@@ -68,7 +68,7 @@ chatForm.addEventListener("submit", async (event) => {
 
     } catch (error) {
         typingElement.remove();
-        addMessage("assistant", "[Erro]: Não foi possível conectar ao servidor (http://localhost:3000).");
+        addMessage("assistant", `[Erro]: Não foi possível conectar ao servidor (${API_BASE}).`);
     } finally {
         btnSend.disabled = false;
         messageInput.focus();
@@ -122,18 +122,78 @@ if (btnQuickLFG60) {
     });
 }
 
-// 6. Sugestões Rápidas
+// 6. Botão de Enviar Planilha Estática de Teste (Cabeçalho)
+if (btnSendStaticExcel) {
+    btnSendStaticExcel.addEventListener("click", () => {
+        openInstantEmailModal({
+            rawSensorData: JSON.stringify({
+                temperatura: 24.5,
+                umidade: 54.0,
+                co2: 450,
+                pm25: 10.2,
+                pm10: 18.0,
+                voc: 0.15,
+                formaldeido: 0.02
+            }),
+            analysisText: "Parecer Técnico de Auditoria com Planilha Estática Anexa",
+            isStaticTest: true
+        });
+    });
+}
+
+// 7. Botão de Download de Planilha Estática (.xlsx)
+if (btnDownloadStaticExcel) {
+    btnDownloadStaticExcel.addEventListener("click", async () => {
+        try {
+            btnDownloadStaticExcel.textContent = "Baixando...";
+            btnDownloadStaticExcel.disabled = true;
+
+            const res = await fetch(`${API_BASE}/analyze/excel`);
+            if (!res.ok) throw new Error("Falha ao baixar planilha estática.");
+
+            const blob = await res.blob();
+            const downloadUrl = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = downloadUrl;
+            a.download = `planilha_estatica_amostra_${Date.now()}.xlsx`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(downloadUrl);
+
+            btnDownloadStaticExcel.textContent = "✓ Baixado";
+            setTimeout(() => {
+                btnDownloadStaticExcel.textContent = "📥 Baixar Excel Estático";
+                btnDownloadStaticExcel.disabled = false;
+            }, 2500);
+
+        } catch (err) {
+            console.error("Erro ao baixar planilha:", err);
+            alert("Erro ao baixar planilha estática.");
+            btnDownloadStaticExcel.textContent = "📥 Baixar Excel Estático";
+            btnDownloadStaticExcel.disabled = false;
+        }
+    });
+}
+
+// 8. Sugestões Rápidas (Event Delegation)
 if (quickSuggestions) {
     quickSuggestions.addEventListener("click", (event) => {
+        const btnStatic = event.target.closest("#btn-quick-static-excel");
+        if (btnStatic) {
+            btnSendStaticExcel.click();
+            return;
+        }
+
         const btn = event.target.closest(".prompt-btn");
-        if (btn) {
+        if (btn && btn.getAttribute("data-text")) {
             messageInput.value = btn.getAttribute("data-text");
             messageInput.focus();
         }
     });
 }
 
-// 7. Clique no botão de Download de PDF e Envio por E-mail da Mensagem
+// 9. Clique nos botões de Download de PDF, Excel e Envio por E-mail dentro do Chat
 chatMessages.addEventListener("click", async (event) => {
     // Ação 1: Download de PDF
     const pdfBtn = event.target.closest(".btn-download-pdf");
@@ -149,7 +209,6 @@ chatMessages.addEventListener("click", async (event) => {
                 const sensorData = JSON.parse(decodeURIComponent(rawData));
                 const analysis = decodeURIComponent(analysisText || "");
 
-                // Solicita o PDF binário ao backend
                 const response = await fetch(`${API_BASE}/analyze/pdf`, {
                     method: "POST",
                     headers: {
@@ -163,7 +222,6 @@ chatMessages.addEventListener("click", async (event) => {
 
                 if (!response.ok) throw new Error("Falha ao gerar o PDF no servidor.");
 
-                // Converte em Blob e dispara o download no navegador
                 const blob = await response.blob();
                 const downloadUrl = window.URL.createObjectURL(blob);
                 const a = document.createElement("a");
@@ -190,7 +248,51 @@ chatMessages.addEventListener("click", async (event) => {
         return;
     }
 
-    // Ação 2: Enviar por E-mail Imediato (Abre modal dedicado)
+    // Ação 2: Download de Planilha Excel (.xlsx)
+    const excelBtn = event.target.closest(".btn-download-excel");
+    if (excelBtn) {
+        const rawData = excelBtn.getAttribute("data-sensor");
+        if (rawData) {
+            try {
+                excelBtn.textContent = "Gerando Excel...";
+                excelBtn.disabled = true;
+
+                const sensorData = JSON.parse(decodeURIComponent(rawData));
+                const response = await fetch(`${API_BASE}/lfg60/excel`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ data: sensorData })
+                });
+
+                if (!response.ok) throw new Error("Falha ao gerar o Excel.");
+
+                const blob = await response.blob();
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = downloadUrl;
+                a.download = `registros_lfg60_${Date.now()}.xlsx`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(downloadUrl);
+
+                excelBtn.textContent = "✓ Excel Baixado";
+                setTimeout(() => {
+                    excelBtn.textContent = "Baixar Planilha Excel";
+                    excelBtn.disabled = false;
+                }, 2500);
+
+            } catch (err) {
+                console.error("Erro ao baixar Excel:", err);
+                alert("Erro ao gerar o arquivo Excel.");
+                excelBtn.textContent = "Baixar Planilha Excel";
+                excelBtn.disabled = false;
+            }
+        }
+        return;
+    }
+
+    // Ação 3: Enviar por E-mail Imediato (Abre modal dedicado com PDF + Excel)
     const emailBtn = event.target.closest(".btn-send-email");
     if (emailBtn) {
         const rawData = emailBtn.getAttribute("data-sensor");
@@ -207,7 +309,7 @@ chatMessages.addEventListener("click", async (event) => {
 });
 
 // ==========================================================================
-// 8. Controle do Modal de Envio Rápido por E-mail
+// 10. Controle do Modal de Envio Rápido por E-mail (Múltiplos Anexos: PDF + Excel)
 // ==========================================================================
 const emailModal = document.getElementById("email-modal");
 const btnCloseEmailModal = document.getElementById("btn-close-email-modal");
@@ -219,14 +321,14 @@ const instantEmailFeedback = document.getElementById("instant-email-feedback");
 
 let currentEmailPayload = null;
 
-function openInstantEmailModal({ rawSensorData, analysisText, sourceButton }) {
+function openInstantEmailModal({ rawSensorData, analysisText, isStaticTest = false, sourceButton = null }) {
     currentEmailPayload = {
         sensorData: JSON.parse(decodeURIComponent(rawSensorData)),
         analysis: decodeURIComponent(analysisText || ""),
+        isStaticTest,
         sourceButton
     };
 
-    // Preenche com o último e-mail salvo ou valor padrão
     const savedEmail = localStorage.getItem("sensimonitor_recipient_email") || "victorgois122@gmail.com";
     if (instantEmailRecipient) {
         instantEmailRecipient.value = savedEmail;
@@ -234,7 +336,9 @@ function openInstantEmailModal({ rawSensorData, analysisText, sourceButton }) {
 
     if (instantEmailSubject) {
         const nowStr = new Date().toLocaleDateString("pt-BR");
-        instantEmailSubject.value = `[SensiMonitor] Relatório Técnico Ambiental LFG60 - ${nowStr}`;
+        instantEmailSubject.value = isStaticTest
+            ? `[SensiMonitor] Teste de Planilha Excel (.xlsx) e Laudo PDF - ${nowStr}`
+            : `[SensiMonitor] Relatório Técnico Ambiental LFG60 - ${nowStr}`;
     }
 
     if (instantEmailFeedback) {
@@ -266,15 +370,18 @@ if (btnConfirmSendEmail) {
             return;
         }
 
-        // Salva para futuros envios
         localStorage.setItem("sensimonitor_recipient_email", recipient);
 
         try {
-            btnConfirmSendEmail.textContent = "Enviando...";
+            btnConfirmSendEmail.textContent = "Enviando (PDF + Excel)...";
             btnConfirmSendEmail.disabled = true;
-            showInstantEmailFeedback("Gerando parecer e enviando relatório por e-mail...", "info");
+            showInstantEmailFeedback("Gerando laudo PDF e planilha Excel (.xlsx) para envio...", "info");
 
-            const response = await fetch(`${API_BASE}/lfg60/email/send`, {
+            const endpoint = currentEmailPayload.isStaticTest
+                ? `${API_BASE}/analyze/test-excel-email`
+                : `${API_BASE}/lfg60/email/send`;
+
+            const response = await fetch(endpoint, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
@@ -289,24 +396,24 @@ if (btnConfirmSendEmail) {
 
             const result = await response.json();
             if (response.ok && result.success) {
-                showInstantEmailFeedback(`✓ Relatório enviado com sucesso para ${recipient}!`, "success");
+                showInstantEmailFeedback(`✓ Relatório e Planilha Excel enviados com sucesso para ${recipient}!`, "success");
                 if (currentEmailPayload.sourceButton) {
-                    currentEmailPayload.sourceButton.textContent = "✓ E-mail Enviado";
+                    currentEmailPayload.sourceButton.textContent = "✓ E-mail Enviado (PDF + Excel)";
                 }
                 setTimeout(() => {
                     closeInstantEmailModal();
-                    btnConfirmSendEmail.textContent = "Enviar Relatório";
+                    btnConfirmSendEmail.textContent = "Enviar Relatório (PDF + Excel)";
                     btnConfirmSendEmail.disabled = false;
                 }, 1800);
             } else {
                 showInstantEmailFeedback(`Erro ao enviar: ${result.error || "Falha na comunicação."}`, "error");
-                btnConfirmSendEmail.textContent = "Enviar Relatório";
+                btnConfirmSendEmail.textContent = "Enviar Relatório (PDF + Excel)";
                 btnConfirmSendEmail.disabled = false;
             }
         } catch (err) {
             console.error("Erro ao enviar e-mail:", err);
             showInstantEmailFeedback("Erro de conexão ao enviar o relatório.", "error");
-            btnConfirmSendEmail.textContent = "Enviar Relatório";
+            btnConfirmSendEmail.textContent = "Enviar Relatório (PDF + Excel)";
             btnConfirmSendEmail.disabled = false;
         }
     });
@@ -333,7 +440,7 @@ function showInstantEmailFeedback(msg, type) {
 }
 
 // ==========================================================================
-// 9. Controle do Modal de Agendamento
+// 11. Controle do Modal de Agendamento
 // ==========================================================================
 const btnOpenSchedule = document.getElementById("btn-open-schedule");
 const btnCloseModal = document.getElementById("btn-close-modal");
@@ -358,7 +465,7 @@ async function loadScheduleStatus() {
 
             const lastRunFormatted = data.lastRun ? new Date(data.lastRun).toLocaleString("pt-BR") : "Nenhum ainda";
             scheduleStatusInfo.innerHTML = `
-                <div><strong>Status:</strong> ${data.active ? '<span style="color:#10b981;">Ativo</span>' : '<span style="color:#ef4444;">Pausado</span>'}</div>
+                <div><strong>Status:</strong> ${data.active ? '<span style="color:#10b981;">Ativo (PDF + Excel)</span>' : '<span style="color:#ef4444;">Pausado</span>'}</div>
                 <div><strong>Horário Configurado:</strong> ${data.time} (${data.timezone})</div>
                 <div><strong>Destinatário Atual:</strong> ${data.recipient}</div>
                 <div><strong>Último Disparo:</strong> ${lastRunFormatted} (${data.lastStatus})</div>
@@ -402,7 +509,6 @@ if (btnSaveSchedule) {
             return;
         }
 
-        // Salva a preferência
         localStorage.setItem("sensimonitor_recipient_email", recipient);
 
         try {
@@ -434,7 +540,7 @@ if (btnSaveSchedule) {
 if (btnTriggerNow) {
     btnTriggerNow.addEventListener("click", async () => {
         const recipient = scheduleRecipient.value.trim();
-        if (!confirm(`Deseja disparar agora a geração e envio do relatório para ${recipient || "o destinatário padrão"}?`)) {
+        if (!confirm(`Deseja disparar agora a geração e envio do relatório (PDF + Excel) para ${recipient || "o destinatário padrão"}?`)) {
             return;
         }
 
@@ -450,7 +556,7 @@ if (btnTriggerNow) {
 
             const data = await response.json();
             if (response.ok && data.success) {
-                alert(`✓ Disparo executado com sucesso! Relatório gerado e enviado para ${recipient}.`);
+                alert(`✓ Disparo executado com sucesso! Relatório gerado e enviado (PDF + Excel) para ${recipient}.`);
                 loadScheduleStatus();
             } else {
                 alert(`Erro no disparo: ${data.error || "Falha desconhecida"}`);
@@ -465,10 +571,10 @@ if (btnTriggerNow) {
 }
 
 // ==========================================================================
-// Funções Auxiliares de Interface
+// 12. Funções Auxiliares de Interface
 // ==========================================================================
 
-function addMessage(sender, text, sensorDataForPdf = null) {
+function addMessage(sender, text, sensorData = null) {
     const row = document.createElement("div");
     row.className = `msg-row ${sender}`;
 
@@ -476,23 +582,28 @@ function addMessage(sender, text, sensorDataForPdf = null) {
     const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const formatted = formatText(text);
 
-    let pdfActionHtml = "";
-    if (sensorDataForPdf) {
-        const encodedData = encodeURIComponent(JSON.stringify(sensorDataForPdf));
+    let actionsHtml = "";
+    if (sensorData) {
+        const encodedData = encodeURIComponent(JSON.stringify(sensorData));
         const encodedAnalysis = encodeURIComponent(text);
-        pdfActionHtml = `
+        actionsHtml = `
             <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); display: flex; gap: 8px; flex-wrap: wrap;">
                 <button type="button" class="btn-primary btn-download-pdf" 
                     data-sensor="${encodedData}" 
                     data-analysis="${encodedAnalysis}"
                     style="padding: 4px 10px; font-size: 11.5px;">
-                    Baixar Relatório PDF
+                    📄 Baixar Relatório PDF
+                </button>
+                <button type="button" class="btn-primary btn-download-excel" 
+                    data-sensor="${encodedData}" 
+                    style="background:#059669; border-color:#059669; padding: 4px 10px; font-size: 11.5px;">
+                    📊 Baixar Planilha Excel
                 </button>
                 <button type="button" class="btn-secondary btn-send-email" 
                     data-sensor="${encodedData}" 
                     data-analysis="${encodedAnalysis}"
                     style="padding: 4px 10px; font-size: 11.5px;">
-                    Enviar por E-mail
+                    ✉️ Enviar por E-mail (PDF + Excel)
                 </button>
             </div>
         `;
@@ -505,7 +616,7 @@ function addMessage(sender, text, sensorDataForPdf = null) {
                 <span class="msg-time">${time}</span>
             </div>
             <div class="msg-content">${formatted}</div>
-            ${pdfActionHtml}
+            ${actionsHtml}
         </div>
     `;
 
@@ -542,7 +653,6 @@ function formatText(text) {
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
 
-    // Formatação simples de cabeçalhos e negritos
     safe = safe.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
     safe = safe.replace(/### (.*$)/gim, '<div style="font-weight:600; color:#38bdf8; margin:6px 0 2px 0;">$1</div>');
     safe = safe.replace(/## (.*$)/gim, '<div style="font-weight:600; color:#38bdf8; margin:8px 0 2px 0;">$1</div>');
@@ -552,4 +662,3 @@ function formatText(text) {
 
     return safe;
 }
-

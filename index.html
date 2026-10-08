@@ -13,11 +13,17 @@
             <div class="header-brand">
                 <span class="brand-name">SensiMonitor</span>
                 <span class="brand-divider">/</span>
-                <span class="brand-tag">Qualidade do Ar (LFG60)</span>
+                <span class="brand-tag">Qualidade do Ar (LFG60) & Telemetria</span>
             </div>
             <div class="header-controls">
                 <button type="button" id="btn-quick-lfg60" class="btn-primary" style="padding: 4px 10px; font-size: 11.5px;">
                     Analisar Sensor LFG60
+                </button>
+                <button type="button" id="btn-send-static-excel" class="btn-primary" style="background:#059669; border-color:#059669; padding: 4px 10px; font-size: 11.5px;" title="Dispara e-mail com planilha Excel (.xlsx) estática de teste">
+                    📊 Enviar Planilha de Teste
+                </button>
+                <button type="button" id="btn-download-static-excel" class="btn-secondary" style="padding: 4px 10px; font-size: 11.5px;" title="Baixar planilha Excel (.xlsx) estática com amostras">
+                    📥 Baixar Excel Estático
                 </button>
                 <button type="button" id="btn-open-schedule" class="btn-secondary" style="padding: 4px 10px; font-size: 11.5px;">
                     Agendamento E-mail
@@ -35,11 +41,14 @@
             <div class="chat-messages" id="chat-messages">
                 <div class="welcome-box">
                     <h2>Assistente de Análise Ambiental & Sensor LFG60</h2>
-                    <p>Envie dados de telemetria ou realize consultas sobre conformidade, parâmetros ambientais e relatórios técnicos em PDF com agendamento automático por e-mail.</p>
+                    <p>Envie dados de telemetria ou realize consultas sobre conformidade, parâmetros ambientais e relatórios técnicos em PDF com agendamento automático e exportação de planilhas Excel (.xlsx) por e-mail.</p>
                     
                     <div class="quick-prompts" id="quick-suggestions">
                         <button type="button" class="prompt-btn" data-text='{"temperatura":37.5,"umidade":55.0,"co2":450,"pm25":10.2,"pm10":18.0,"voc":0.15,"formaldeido":0.02}'>
                             Telemetria LFG60 (Exemplo Real)
+                        </button>
+                        <button type="button" id="btn-quick-static-excel" class="prompt-btn" style="border-color: #10b981; color: #34d399;">
+                            📊 Testar Envio de Planilha Estática (.xlsx)
                         </button>
                         <button type="button" class="prompt-btn" data-text="Quais são os limites recomendados de PM2.5 e PM10 segundo as normas vigentes?">
                             Limites de PM2.5 e PM10
@@ -56,12 +65,12 @@
         <div id="email-modal" class="modal-backdrop" style="display: none;">
             <div class="modal-card">
                 <div class="modal-header">
-                    <h3 style="font-size: 14px; font-weight: 600; color: #ffffff;">Enviar Relatório por E-mail</h3>
+                    <h3 id="email-modal-header-title" style="font-size: 14px; font-weight: 600; color: #ffffff;">Enviar Relatório por E-mail</h3>
                     <button type="button" id="btn-close-email-modal" class="modal-close">&times;</button>
                 </div>
                 <div class="modal-body">
-                    <p style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 14px;">
-                        Informe o e-mail de destino para envio imediato do parecer técnico com o arquivo PDF anexado.
+                    <p id="email-modal-description" style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 14px;">
+                        Informe o e-mail de destino para envio do laudo pericial em PDF acompanhado da <strong>planilha Excel (.xlsx)</strong> com os registros das leituras.
                     </p>
 
                     <div class="form-group">
@@ -74,6 +83,11 @@
                         <input type="text" id="instant-email-subject" class="form-input" placeholder="[SensiMonitor] Relatório Técnico Ambiental LFG60">
                     </div>
 
+                    <div style="display: flex; gap: 6px; margin: 10px 0 6px 0;">
+                        <span style="background: rgba(2, 132, 199, 0.2); border: 1px solid #0284c7; color: #38bdf8; padding: 2px 8px; border-radius: 4px; font-size: 11px;">📄 Anexo PDF</span>
+                        <span style="background: rgba(16, 185, 129, 0.2); border: 1px solid #10b981; color: #34d399; padding: 2px 8px; border-radius: 4px; font-size: 11px;">📊 Anexo Excel (.xlsx)</span>
+                    </div>
+
                     <div id="instant-email-feedback" style="display: none; padding: 10px; border-radius: 4px; font-size: 12px; margin-top: 10px;"></div>
                 </div>
                 <div class="modal-footer">
@@ -81,7 +95,7 @@
                         Cancelar
                     </button>
                     <button type="button" id="btn-confirm-send-email" class="btn-primary" style="font-size: 12px;">
-                        Enviar Relatório
+                        Enviar Relatório (PDF + Excel)
                     </button>
                 </div>
             </div>
@@ -96,7 +110,7 @@
                 </div>
                 <div class="modal-body">
                     <p style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 14px;">
-                        Configure o envio periódico automatizado do parecer técnico e do arquivo PDF para a equipe de gestão ambiental.
+                        Configure o envio periódico automatizado do laudo em PDF e da planilha Excel (.xlsx) para a equipe de gestão.
                     </p>
 
                     <div class="form-group">
@@ -122,7 +136,7 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" id="btn-trigger-now" class="btn-secondary" style="font-size: 12px;">
-                        Disparar Agora
+                        Disparar Agora (PDF + Excel)
                     </button>
                     <button type="button" id="btn-save-schedule" class="btn-primary" style="font-size: 12px;">
                         Salvar Configurações
